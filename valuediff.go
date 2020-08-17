@@ -1,9 +1,11 @@
 package valuediff
 
 import (
+	"fmt"
 	"reflect"
 	"sort"
 	"strconv"
+	"strings"
 	"unsafe"
 )
 
@@ -17,6 +19,10 @@ type Diff struct {
 	Stack []string
 	Src   interface{}
 	Dist  interface{}
+}
+
+func (d Diff) String() string {
+	return fmt.Sprintf("<%s| %v| %v>", strings.Join(d.Stack, "."), d.Src, d.Dist)
 }
 
 type valueDiff struct {
@@ -49,7 +55,7 @@ func (v *valueDiff) saveDiff(v1, v2 reflect.Value) {
 	} else if v1.CanInterface() {
 		diff.Src = v1.Interface()
 	} else {
-		diff.Src = v1.String()
+		diff.Src = v1
 	}
 
 	if v2.Kind() == reflect.Invalid {
@@ -57,7 +63,7 @@ func (v *valueDiff) saveDiff(v1, v2 reflect.Value) {
 	} else if v2.CanInterface() {
 		diff.Dist = v2.Interface()
 	} else {
-		diff.Dist = v2.String()
+		diff.Dist = v2
 	}
 	v.diffs = append(v.diffs, diff)
 }
@@ -97,6 +103,8 @@ func (v *valueDiff) deepValueDiff(v1, v2 reflect.Value, info string) (diff bool)
 		return false
 	}
 
+	typ := v1.Type()
+
 	if hard(v1, v2) {
 		addr1 := (*ptrHeader)(unsafe.Pointer(&v1)).ptr
 		addr2 := (*ptrHeader)(unsafe.Pointer(&v2)).ptr
@@ -104,12 +112,27 @@ func (v *valueDiff) deepValueDiff(v1, v2 reflect.Value, info string) (diff bool)
 			addr1, addr2 = addr2, addr1
 		}
 
-		typ := v1.Type()
 		v1 := visit{addr1, addr2, typ}
 		if _, ok := v.visited[v1]; ok {
 			return true
 		}
 		v.visited[v1] = struct{}{}
+	}
+
+	const equal = "Equal"
+	if fnTyp, ok := typ.MethodByName(equal); ok &&
+		fnTyp.Type.NumIn() == 2 &&
+		fnTyp.Type.NumOut() == 1 &&
+		fnTyp.Type.Out(0).Kind() == reflect.Bool {
+		fn := v1.MethodByName(equal)
+		var r reflect.Value
+		switch fnTyp.Type.In(0) {
+		case typ:
+			r = fn.Call([]reflect.Value{v2})[0]
+		case reflect.PtrTo(typ):
+			r = fn.Call([]reflect.Value{v2.Addr()})[0]
+		}
+		return r.Bool()
 	}
 
 	switch v1.Kind() {
@@ -160,7 +183,7 @@ func (v *valueDiff) deepValueDiff(v1, v2 reflect.Value, info string) (diff bool)
 		if v1.Pointer() == v2.Pointer() {
 			return true
 		}
-		vv1, union, vv2 := unionKey(v1.Type().Key(), v1, v2)
+		vv1, union, vv2 := unionKey(v1, v2)
 
 		for _, key := range vv1 {
 			v.deepValueDiff(v1.MapIndex(key), reflect.Value{}, key.String())
@@ -181,10 +204,9 @@ func (v *valueDiff) deepValueDiff(v1, v2 reflect.Value, info string) (diff bool)
 		}
 		fallthrough
 	default:
-		if v1.CanInterface() && v1.CanInterface() {
+		if v1.CanInterface() {
 			return reflect.DeepEqual(v1.Interface(), v2.Interface())
 		}
-
 		return false
 	}
 }
@@ -194,7 +216,7 @@ type ptrHeader struct {
 	ptr uintptr
 }
 
-func unionKey(keyType reflect.Type, m1, m2 reflect.Value) (vv1, union, vv2 []reflect.Value) {
+func unionKey(m1, m2 reflect.Value) (vv1, union, vv2 []reflect.Value) {
 	for iter := m1.MapRange(); iter.Next(); {
 		key := iter.Key()
 		if m2.MapIndex(key).Kind() == reflect.Invalid {

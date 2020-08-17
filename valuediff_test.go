@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"reflect"
 	"testing"
+	"time"
 )
 
 func TestDeepDiff(t *testing.T) {
+	now := time.Now()
 	type args struct {
 		x interface{}
 		y interface{}
@@ -154,7 +156,6 @@ func TestDeepDiff(t *testing.T) {
 			},
 			want: []Diff{{Stack: []string{"0", "b"}, Src: "y", Dist: nil}},
 		},
-
 		{
 			args: args{
 				djson(`{"v":{"a":"z","b":[1,2]}}`),
@@ -162,11 +163,25 @@ func TestDeepDiff(t *testing.T) {
 			},
 			want: []Diff{{Stack: []string{"v", "b"}, Src: []interface{}{1., 2.}, Dist: []interface{}{1.}}},
 		},
+		{
+			args: args{
+				now.UTC(),
+				now.Local(),
+			},
+			want: nil,
+		},
+		{
+			args: args{
+				now.UTC().Add(1),
+				now.UTC(),
+			},
+			want: []Diff{{Stack: []string{}, Src: now.UTC().Add(1), Dist: now.UTC()}},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := DeepDiff(tt.args.x, tt.args.y); !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("DeepDiff() = \n%#v, want \n%#v", got, tt.want)
+				t.Errorf("DeepDiff() = %v, want %v", got, tt.want)
 			}
 		})
 	}
